@@ -12,34 +12,42 @@ terraform {
 }
 
 provider "aws" {
-  region = "us-west-2"
+  region = var.region
 }
 
 # VPC Configuration
 resource "aws_vpc" "main" {
-  cidr_block           = "10.0.0.0/16"
+  cidr_block           = var.vpc_cidr
   enable_dns_hostnames = true
   enable_dns_support   = true
 
   tags = {
     Name = "main-vpc"
-    Environment = "production"
+    Environment = var.environment
   }
 }
 
-# Security Group with overly permissive rules (security issue)
+# Security Group with improved rules (still has some issues)
 resource "aws_security_group" "web" {
   name        = "web-sg"
   description = "Security group for web servers"
   vpc_id      = aws_vpc.main.id
 
-  # Overly permissive ingress rule (security issue)
+  # Still overly permissive ingress rule (security issue)
   ingress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
-    description = "Allow all traffic"
+    description = "Allow HTTP traffic"
+  }
+
+  ingress {
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+    description = "Allow HTTPS traffic"
   }
 
   egress {
@@ -54,31 +62,53 @@ resource "aws_security_group" "web" {
   }
 }
 
-# EC2 Instance
+# EC2 Instance with improved configuration
 resource "aws_instance" "web" {
-  ami           = "ami-12345678"  # Hardcoded AMI (compliance issue)
-  instance_type = "t3.micro"
+  ami           = data.aws_ami.amazon_linux.id  # Using data source instead of hardcoded AMI
+  instance_type = var.instance_type
   
   vpc_security_group_ids = [aws_security_group.web.id]
   
-  # Missing user_data for proper configuration
+  # Added user_data for proper configuration
+  user_data = <<-EOF
+              #!/bin/bash
+              yum update -y
+              yum install -y httpd
+              systemctl start httpd
+              systemctl enable httpd
+              EOF
   
   tags = {
     Name = "web-server"
-    Environment = "production"
+    Environment = var.environment
   }
 }
 
-# S3 Bucket without encryption (security issue)
-resource "aws_s3_bucket" "data" {
-  bucket = "my-unique-data-bucket-12345"
-  
-  # Missing encryption configuration
-  # Missing versioning
-  # Missing lifecycle policies
+# Data source for latest Amazon Linux AMI
+data "aws_ami" "amazon_linux" {
+  most_recent = true
+  owners      = ["amazon"]
+
+  filter {
+    name   = "name"
+    values = ["amzn2-ami-hvm-*-x86_64-gp2"]
+  }
 }
 
-# IAM Role with overly permissive policy (security issue)
+# S3 Bucket with improved configuration (still missing some security features)
+resource "aws_s3_bucket" "data" {
+  bucket = var.bucket_name
+}
+
+# S3 bucket versioning
+resource "aws_s3_bucket_versioning" "data" {
+  bucket = aws_s3_bucket.data.id
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+# IAM Role with improved policy (still overly permissive)
 resource "aws_iam_role" "lambda_role" {
   name = "lambda-execution-role"
 
@@ -105,8 +135,20 @@ resource "aws_iam_role_policy" "lambda_policy" {
     Statement = [
       {
         Effect = "Allow"
-        Action = "*"  # Overly permissive (security issue)
-        Resource = "*"
+        Action = [
+          "logs:CreateLogGroup",
+          "logs:CreateLogStream",
+          "logs:PutLogEvents"
+        ]
+        Resource = "arn:aws:logs:*:*:*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject",
+          "s3:PutObject"
+        ]
+        Resource = "${aws_s3_bucket.data.arn}/*"
       }
     ]
   })

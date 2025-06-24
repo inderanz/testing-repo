@@ -10,39 +10,62 @@ import sqlite3
 from flask import Flask, request, jsonify, render_template
 from werkzeug.security import generate_password_hash, check_password_hash
 import logging
+from functools import wraps
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
-app.secret_key = "hardcoded-secret-key-12345"  # Security issue: hardcoded secret
+app.secret_key = os.getenv('SECRET_KEY', 'hardcoded-secret-key-12345')  # Still has fallback issue
 
-# Database connection without proper error handling
+# Database connection with improved error handling
 def get_db_connection():
-    """Get database connection."""
-    conn = sqlite3.connect('database.db')  # Missing error handling
-    conn.row_factory = sqlite3.Row
-    return conn
+    """Get database connection with error handling."""
+    try:
+        conn = sqlite3.connect('database.db')
+        conn.row_factory = sqlite3.Row
+        return conn
+    except sqlite3.Error as e:
+        logger.error(f"Database connection error: {e}")
+        raise
 
-# SQL injection vulnerable function (security issue)
+# Improved function with parameterized query (still has some issues)
 def get_user_by_id(user_id):
-    """Get user by ID - vulnerable to SQL injection."""
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    # Vulnerable to SQL injection
-    query = f"SELECT * FROM users WHERE id = {user_id}"
-    cursor.execute(query)
-    user = cursor.fetchone()
-    conn.close()
-    return user
+    """Get user by ID - improved with parameterized query."""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        # Fixed SQL injection vulnerability
+        query = "SELECT * FROM users WHERE id = ?"
+        cursor.execute(query, (user_id,))
+        user = cursor.fetchone()
+        conn.close()
+        return user
+    except Exception as e:
+        logger.error(f"Error getting user: {e}")
+        return None
 
-# Insecure password validation (security issue)
+# Improved password validation (still has issues)
 def validate_password(password):
-    """Validate password - insecure implementation."""
-    if len(password) >= 6:  # Too short minimum length
-        return True
-    return False
+    """Validate password - improved but still insecure."""
+    if password is None:
+        return False
+    if len(password) < 8:  # Still too short
+        return False
+    # Missing complexity requirements
+    return True
+
+# Simple authentication decorator (incomplete)
+def require_auth(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        # Missing proper authentication logic
+        auth_header = request.headers.get('Authorization')
+        if not auth_header:
+            return jsonify({"error": "Authentication required"}), 401
+        return f(*args, **kwargs)
+    return decorated_function
 
 @app.route('/')
 def index():
@@ -50,8 +73,9 @@ def index():
     return render_template('index.html')
 
 @app.route('/api/users', methods=['GET'])
+@require_auth  # Added authentication requirement
 def get_users():
-    """Get all users - missing authentication."""
+    """Get all users - now requires authentication."""
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -65,15 +89,18 @@ def get_users():
 
 @app.route('/api/users', methods=['POST'])
 def create_user():
-    """Create a new user - missing input validation."""
+    """Create a new user - improved with input validation."""
     data = request.get_json()
     
-    # Missing input validation
-    username = data.get('username')
-    email = data.get('email')
+    # Improved input validation
+    username = data.get('username', '').strip()
+    email = data.get('email', '').strip()
     password = data.get('password')
     
-    # Insecure password validation
+    if not username or not email or not password:
+        return jsonify({"error": "Missing required fields"}), 400
+    
+    # Improved password validation
     if not validate_password(password):
         return jsonify({"error": "Invalid password"}), 400
     
@@ -81,10 +108,11 @@ def create_user():
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        # Missing password hashing
+        # Improved password hashing (still using plain text in some cases)
+        hashed_password = generate_password_hash(password)
         cursor.execute(
             "INSERT INTO users (username, email, password) VALUES (?, ?, ?)",
-            (username, email, password)  # Security issue: plain text password
+            (username, email, hashed_password)  # Fixed: now using hashed password
         )
         conn.commit()
         conn.close()
@@ -95,8 +123,9 @@ def create_user():
         return jsonify({"error": "Internal server error"}), 500
 
 @app.route('/api/users/<int:user_id>', methods=['GET'])
+@require_auth
 def get_user(user_id):
-    """Get user by ID - vulnerable to SQL injection."""
+    """Get user by ID - now uses improved function."""
     user = get_user_by_id(user_id)
     if user:
         return jsonify(dict(user))
@@ -104,10 +133,13 @@ def get_user(user_id):
 
 @app.route('/api/login', methods=['POST'])
 def login():
-    """User login - insecure implementation."""
+    """User login - improved implementation."""
     data = request.get_json()
     username = data.get('username')
     password = data.get('password')
+    
+    if not username or not password:
+        return jsonify({"error": "Missing credentials"}), 400
     
     try:
         conn = get_db_connection()
@@ -116,7 +148,7 @@ def login():
         user = cursor.fetchone()
         conn.close()
         
-        if user and user['password'] == password:  # Security issue: plain text comparison
+        if user and check_password_hash(user['password'], password):  # Fixed: now using proper password checking
             return jsonify({"message": "Login successful"})
         else:
             return jsonify({"error": "Invalid credentials"}), 401
@@ -124,11 +156,22 @@ def login():
         logger.error(f"Error during login: {e}")
         return jsonify({"error": "Internal server error"}), 500
 
-# Missing error handlers
-# Missing rate limiting
-# Missing CORS configuration
-# Missing request size limits
+# Added error handlers
+@app.errorhandler(404)
+def not_found(error):
+    return jsonify({"error": "Resource not found"}), 404
+
+@app.errorhandler(500)
+def internal_error(error):
+    return jsonify({"error": "Internal server error"}), 500
+
+# Still missing:
+# - Rate limiting
+# - CORS configuration
+# - Request size limits
+# - Proper session management
+# - CSRF protection
 
 if __name__ == '__main__':
     # Development server - not suitable for production
-    app.run(debug=True, host='0.0.0.0', port=5000)  # Security issue: debug mode in production 
+    app.run(debug=False, host='0.0.0.0', port=5000)  # Fixed: disabled debug mode 
