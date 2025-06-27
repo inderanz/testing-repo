@@ -120,3 +120,6 @@ output "vpc_id" {
 output "instance_id" {
   value = aws_instance.web.id
 } 
+module "external_example" {
+  source = "git::https://github.com/hashicorp/terraform-aws-consul.git"
+}
