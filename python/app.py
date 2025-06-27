@@ -131,4 +131,5 @@ def login():
 
 if __name__ == '__main__':
     # Development server - not suitable for production
-    app.run(debug=True, host='0.0.0.0', port=5000)  # Security issue: debug mode in production 
+    app.run(debug=True, host='0.0.0.0', port=5000)  # Security issue: debug mode in production # Small PR test
+# Tiny PR test
