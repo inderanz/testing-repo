@@ -112,6 +112,15 @@ resource "aws_iam_role_policy" "lambda_policy" {
   })
 }
 
+# Test Module with Security Issues
+module "test_module" {
+  source = "./modules/test-module"
+  
+  environment  = "test"
+  project_name = "security-test"
+  region       = "us-west-2"
+}
+
 # Output values
 output "vpc_id" {
   value = aws_vpc.main.id
@@ -119,4 +128,14 @@ output "vpc_id" {
 
 output "instance_id" {
   value = aws_instance.web.id
-} 
+}
+
+output "test_module_instance_id" {
+  description = "Instance ID from test module"
+  value       = module.test_module.instance_id
+}
+
+output "test_module_bucket_name" {
+  description = "Bucket name from test module"
+  value       = module.test_module.bucket_name
+}
